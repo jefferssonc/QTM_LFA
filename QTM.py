@@ -1,37 +1,42 @@
 import numpy as np
+import matplotlib.pyplot as plt
+from collections import defaultdict
 
-# Define uma configuração quântica: (estado, fita, posição da cabeça)
 class QTMConfig:
-    def __init__(self, state, tape, head, amplitude):
+    def __init__(self, state, head, amplitude, w1, w2):
         self.state = state
-        self.tape = tape
         self.head = head
         self.amplitude = amplitude
+        self.w1 = w1
+        self.w2 = w2
 
     def clone(self):
-        return QTMConfig(self.state, self.tape[:], self.head, self.amplitude)
+        return QTMConfig(self.state, self.head, self.amplitude, self.w1, self.w2)
 
-# Define a QTM simulada
 class QuantumTuringMachine:
     def __init__(self, input_string):
         self.input_string = input_string
-        self.blank = '_'
-        self.init_state = 'q0'
         self.accept_state = 'qa'
         self.reject_state = 'qr'
-        self.max_steps = 30
+        self.check_state = 'q_check'
+        self.max_steps = 20
 
-        # Inicializa fita
-        tape = list(input_string) + [self.blank] * 10
-        self.superposition = [QTMConfig(self.init_state, tape, 0, 1.0+0j)]
+        if len(input_string) % 2 != 0:
+            self.superposition = [QTMConfig(self.reject_state, 0, 1.0 + 0j, '', '')]
+        else:
+            mid = len(input_string) // 2
+            w1 = input_string[:mid]
+            w2 = input_string[mid:]
+            self.superposition = [
+                QTMConfig(self.check_state, 0, 1.0 / np.sqrt(2), w1, w2),
+                QTMConfig(self.check_state, 0, -1.0 / np.sqrt(2), w1, w2)
+            ]
 
     def is_final(self, config):
         return config.state in [self.accept_state, self.reject_state]
 
     def measure_acceptance(self):
-        # Soma das probabilidades (amplitude^2) dos estados que aceitaram
-        accept_amp = sum(abs(cfg.amplitude)**2 for cfg in self.superposition if cfg.state == self.accept_state)
-        return accept_amp
+        return sum(abs(cfg.amplitude)**2 for cfg in self.superposition if cfg.state == self.accept_state)
 
     def step(self):
         new_superposition = []
@@ -41,43 +46,30 @@ class QuantumTuringMachine:
                 new_superposition.append(cfg)
                 continue
 
-            symbol = cfg.tape[cfg.head]
-
-            # Transições simplificadas para verificar se a palavra tem o formato ww
-            if cfg.state == 'q0':
-                # Divide as possibilidades de forma "quântica"
-                middle = len(self.input_string) // 2
-                if len(self.input_string) % 2 != 0:
-                    # Palavra de tamanho ímpar não pode estar em L
-                    new_cfg = cfg.clone()
-                    new_cfg.state = self.reject_state
-                    new_superposition.append(new_cfg)
-                    continue
-
-                # Simula superposição para todos os caminhos possíveis de verificação de ww
-                w1 = self.input_string[:middle]
-                w2 = self.input_string[middle:]
-
-                if w1 == w2:
+            if cfg.state == self.check_state:
+                i = cfg.head
+                if i >= len(cfg.w1):
+                    # Verificação concluída
                     new_cfg = cfg.clone()
                     new_cfg.state = self.accept_state
-                    new_cfg.amplitude *= 1 / np.sqrt(2)
                     new_superposition.append(new_cfg)
                 else:
-                    new_cfg = cfg.clone()
-                    new_cfg.state = self.reject_state
-                    new_cfg.amplitude *= 1 / np.sqrt(2)
-                    new_superposition.append(new_cfg)
+                    # Comparação caractere a caractere
+                    if cfg.w1[i] != cfg.w2[i]:
+                        new_cfg = cfg.clone()
+                        new_cfg.state = self.reject_state
+                        new_superposition.append(new_cfg)
+                    else:
+                        next_cfg = cfg.clone()
+                        next_cfg.head += 1
+                        new_superposition.append(next_cfg)
 
-            else:
-                # Para simplificação, configurações finais não se alteram
-                new_superposition.append(cfg)
-
-        # Normaliza amplitudes
+        # Normalização
         total_amp = sum(abs(cfg.amplitude)**2 for cfg in new_superposition)
         if total_amp > 0:
+            norm = np.sqrt(total_amp)
             for cfg in new_superposition:
-                cfg.amplitude /= np.sqrt(total_amp)
+                cfg.amplitude /= norm
 
         self.superposition = new_superposition
 
@@ -86,23 +78,30 @@ class QuantumTuringMachine:
             if all(self.is_final(cfg) for cfg in self.superposition):
                 break
             self.step()
+        return self.measure_acceptance()
 
-        acceptance_probability = self.measure_acceptance()
-        return acceptance_probability > 0.5  # probabilidade maior que 50% para aceitar
+def plot_superposition(superposition, title="Distribuição de Probabilidades"):
+    state_probs = defaultdict(float)
+    for cfg in superposition:
+        state_probs[cfg.state] += abs(cfg.amplitude)**2
 
+    states = list(state_probs.keys())
+    probs = [state_probs[s] for s in states]
 
-# Teste
-inputs = [
-    "abab",   # deve aceitar
-    "aabb",   # rejeitar
-    "aaaa",   # aceitar
-    "aba",    # rejeitar (ímpar)
-    "abba",   # rejeitar
-    "ababab"  # rejeitar (não é w + w)
+    plt.figure(figsize=(6, 4))
+    plt.bar(states, probs, color='darkcyan')
+    plt.title(title)
+    plt.ylabel("Probabilidade")
+    plt.xlabel("Estado")
+    plt.ylim(0, 1)
+    plt.grid(True)
+    plt.show()
 
-]
-
+# Testes
+inputs = ["abab", "aabb", "aaaa", "aba", "abba", "ababab"]
 for inp in inputs:
     qtm = QuantumTuringMachine(inp)
-    result = qtm.run()
-    print(f"Entrada: {inp} => {'Aceita' if result else 'Rejeita'}")
+    acc_prob = qtm.run()
+    accepted = acc_prob > 0.5
+    print(f"Entrada: {inp} => {'Aceita' if accepted else 'Rejeita'} (Probabilidade de Aceitação: {acc_prob:.3f})")
+    plot_superposition(qtm.superposition, title=f"Entrada: {inp}")
